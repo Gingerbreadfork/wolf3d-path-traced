@@ -59,10 +59,9 @@ typedef uint8_t byte;
 typedef uint16_t word;
 typedef int32_t fixed;
 typedef uint32_t longword;
-// Win32
-#ifndef _WIN32
+// `boolean` used to be supplied by <wtypes.h> on Windows; that header is no
+// longer pulled in, so define the type uniformly on every platform.
 typedef int8_t boolean;
-#endif
 typedef void * memptr;
 
 typedef struct
