@@ -52,7 +52,12 @@ static void WriteBMP(const char *path, const uint32_t *rgba, int w, int h) {
 static void Stamp(char *buf, size_t n, const char *kind) {
     static int counter = 0;
     time_t t = time(nullptr);
-    struct tm tmv; localtime_r(&t, &tmv);
+    struct tm tmv;
+#ifdef _WIN32
+    localtime_s(&tmv, &t);   // MSVC/MinGW CRT: (struct tm*, const time_t*)
+#else
+    localtime_r(&t, &tmv);
+#endif
     snprintf(buf, n, "wolf3dpt_%02d%02d%02d_%03d_%s.bmp",
              tmv.tm_hour, tmv.tm_min, tmv.tm_sec, counter++, kind);
 }

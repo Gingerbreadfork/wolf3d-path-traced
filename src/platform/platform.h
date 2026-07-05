@@ -43,6 +43,12 @@ void Plat_SetRelativeMouse(int enabled);
 void        PLAT_SetDataDir(const char *dir);
 const char *PLAT_DataDir(void);
 
+// Directory that holds the compiled shaders (*.comp.spv). Resolved at runtime so
+// a relocatable/downloaded build finds shaders next to the executable: honours
+// the WOLFPT_SHADER_DIR env var, then <exe-dir>/shaders, then the build-time
+// default. (platform_files.cpp)
+const char *PLAT_ShaderDir(void);
+
 #ifdef __cplusplus
 }
 #endif

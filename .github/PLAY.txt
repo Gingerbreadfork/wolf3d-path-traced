@@ -1,0 +1,24 @@
+Wolfenstein 3D: Path Traced
+===========================
+
+Run the wolf3d-pt executable in this folder. The shareware Episode 1 data and the
+compiled shaders ship alongside it, so there is nothing else to install.
+
+Requirements
+------------
+A GPU with Vulkan hardware ray tracing (VK_KHR_ray_query):
+  * AMD RDNA2 or newer
+  * NVIDIA RTX (20-series and up)
+  * Intel Arc
+Without one, the game still runs in the classic raycaster mode.
+
+Controls
+--------
+  F8          toggle classic raycaster <-> path tracer (path traced by default)
+  F7 / F9     toggle the side-by-side split comparison
+  F5          save a screenshot
+  Arrows/WASD move        Ctrl fire        Space open doors
+  1-4         select weapon               Esc menu
+
+The path tracer draws the exact same live game state as the original raycaster --
+one simulation, two renderers.
