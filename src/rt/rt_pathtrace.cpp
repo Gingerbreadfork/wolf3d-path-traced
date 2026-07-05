@@ -22,6 +22,10 @@
 
 using namespace rtvk;
 
+// Runtime-resolved shader directory (platform_files.cpp) so a downloaded build
+// finds its *.spv next to the executable instead of at the build-time path.
+extern "C" const char *PLAT_ShaderDir(void);
+
 namespace rtpt {
 
 // ---- runtime settings ------------------------------------------------------
@@ -341,7 +345,7 @@ static void CreatePipeline() {
     vkCreatePipelineLayout(ctx().device, &pl, nullptr, &g_pipeLayout);
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/pathtrace.comp.spv", WOLFPT_SHADER_DIR);
+    snprintf(path, sizeof(path), "%s/pathtrace.comp.spv", PLAT_ShaderDir());
     VkShaderModule sm = LoadShader(path);
     if (!sm) { printf("[pt] failed to load pathtrace shader\n"); return; }
 
@@ -355,7 +359,7 @@ static void CreatePipeline() {
     vkDestroyShaderModule(ctx().device, sm, nullptr);
 
     // Post pass (bloom + tone map), same descriptor layout.
-    snprintf(path, sizeof(path), "%s/post.comp.spv", WOLFPT_SHADER_DIR);
+    snprintf(path, sizeof(path), "%s/post.comp.spv", PLAT_ShaderDir());
     VkShaderModule pm = LoadShader(path);
     if (pm) {
         VkComputePipelineCreateInfo ppi{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
