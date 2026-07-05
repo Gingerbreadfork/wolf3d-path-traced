@@ -1189,10 +1189,8 @@ static void InitGame()
     boolean didjukebox=false;
 #endif
 
-    // initialize SDL
-#if defined _WIN32
-    putenv("SDL_VIDEODRIVER=directx");
-#endif
+    // initialize SDL (SDL2 selects the appropriate video driver per platform;
+    // the old SDL 1.2 "directx" driver name is invalid and would fail init).
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0)
     {
         printf("Unable to init SDL: %s\n", SDL_GetError());
@@ -1212,21 +1210,8 @@ static void InitGame()
 
     SignonScreen ();
 
-#if defined _WIN32
-    if(!fullscreen)
-    {
-        struct SDL_SysWMinfo wmInfo;
-        SDL_VERSION(&wmInfo.version);
-
-        if(SDL_GetWMInfo(&wmInfo) != -1)
-        {
-            HWND hwndSDL = wmInfo.window;
-            DWORD style = GetWindowLong(hwndSDL, GWL_STYLE) & ~WS_SYSMENU;
-            SetWindowLong(hwndSDL, GWL_STYLE, style);
-            SetWindowPos(hwndSDL, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-        }
-    }
-#endif
+    // (Removed legacy SDL 1.2 Win32 code that stripped the window's system menu
+    // via the native HWND; the SDL2 platform layer owns the window now.)
 
     VH_Startup ();
     IN_Startup ();

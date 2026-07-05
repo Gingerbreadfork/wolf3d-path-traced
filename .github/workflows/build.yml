@@ -22,7 +22,7 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
           cp .github/PLAY.txt       "$PKG/" 2>/dev/null || true
           tar czf "$PKG.tar.gz" "$PKG"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wolf3d-path-traced-linux
           path: wolf3d-path-traced-linux.tar.gz
@@ -57,7 +57,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up MSYS2 (MinGW64)
         uses: msys2/setup-msys2@v2
@@ -92,7 +92,7 @@ jobs:
           ldd "$PKG/wolf3d-pt.exe" | awk '/\/mingw64\/bin\// {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" "$PKG/"; done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wolf3d-path-traced-windows
           path: wolf3d-path-traced-windows
@@ -103,7 +103,7 @@ jobs:
     needs: [ linux, windows ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
 
@@ -113,7 +113,7 @@ jobs:
           zip -r wolf3d-path-traced-windows.zip wolf3d-path-traced-windows
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/wolf3d-path-traced-linux/wolf3d-path-traced-linux.tar.gz
