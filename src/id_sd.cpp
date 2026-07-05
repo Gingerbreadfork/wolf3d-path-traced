@@ -1050,8 +1050,12 @@ SD_Startup(void)
 
     if(Mix_OpenAudio(param_samplerate, AUDIO_S16, 2, param_audiobuffer))
     {
-        printf("Unable to open audio: %s\n", Mix_GetError());
-        return;
+        // No usable audio device (a headless box, or an unconfigured/broken
+        // backend as seen under some Wine setups). Don't bail: keep initialising
+        // the sound system so DigiList/OPL/mixer hooks are set up and the game
+        // runs SILENTLY instead of crashing later in SD_PrepareSound. Every mixer
+        // call no-ops while no device is open.
+        printf("Unable to open audio: %s (continuing without sound)\n", Mix_GetError());
     }
 
     Mix_ReserveChannels(2);  // reserve player and boss weapon channels

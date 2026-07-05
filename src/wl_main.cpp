@@ -1191,11 +1191,18 @@ static void InitGame()
 
     // initialize SDL (SDL2 selects the appropriate video driver per platform;
     // the old SDL 1.2 "directx" driver name is invalid and would fail init).
-    if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0)
+    // Video is required; audio and joystick are best-effort so the game still
+    // starts on machines with no audio device / broken audio backend (silently)
+    // or no joystick.
+    if(SDL_Init(SDL_INIT_VIDEO) < 0)
     {
-        printf("Unable to init SDL: %s\n", SDL_GetError());
+        printf("Unable to init SDL video: %s\n", SDL_GetError());
         exit(1);
     }
+    if(SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+        printf("Audio unavailable: %s (continuing without sound)\n", SDL_GetError());
+    if(SDL_InitSubSystem(SDL_INIT_JOYSTICK) < 0)
+        printf("Joystick unavailable: %s\n", SDL_GetError());
     atexit(SDL_Quit);
 
     int numJoysticks = SDL_NumJoysticks();
