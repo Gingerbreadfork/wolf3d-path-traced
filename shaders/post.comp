@@ -1,0 +1,52 @@
+#version 460
+// Bloom + tone map post pass for the path tracer. Reads the linear HDR frame
+// (accumImage), adds a deterministic multi-ring bloom so bright doors/lights
+// glow, then ACES tone maps, vignettes and gamma-corrects to RGBA8. Fully
+// deterministic (fixed tap pattern) -> no shimmer.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0, rgba32f) uniform image2D accumImage;   // linear HDR in
+layout(binding = 1, rgba8)   uniform image2D outImage;     // LDR out
+layout(binding = 6) uniform Params {
+    vec4  camPos; vec4 camDir; vec4 camRight; vec4 camUp;
+    ivec4 counts;
+    vec4  floorColor; vec4 ceilColor;
+    vec4  tune;        // ambient, shadowStrength, exposure, frame
+} P;
+
+vec3 aces(vec3 x){
+    const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
+void main(){
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dim = imageSize(outImage);
+    if(pix.x>=dim.x || pix.y>=dim.y) return;
+
+    vec3 hdr = imageLoad(accumImage, pix).rgb;
+
+    // Multi-ring disk bloom: sample the HDR frame at fixed offsets (golden
+    // angle) across three radii, keep the part above a soft knee -> soft glow.
+    const float knee = 1.05;
+    vec3 glow = vec3(0.0); float wsum = 0.0;
+    for(int i=0;i<30;i++){
+        float ang = float(i) * 2.399963;                 // golden angle
+        float r   = (i<10 ? 3.0 : (i<20 ? 8.0 : 15.0));
+        float w   = (i<10 ? 1.0 : (i<20 ? 0.6 : 0.3));
+        ivec2 sp = clamp(pix + ivec2(cos(ang)*r, sin(ang)*r), ivec2(0), dim-1);
+        vec3 s = imageLoad(accumImage, sp).rgb;
+        float lum = dot(s, vec3(0.2126,0.7152,0.0722));
+        glow += s * (max(lum-knee,0.0)/max(lum,0.001)) * w;
+        wsum += w;
+    }
+    glow /= wsum;
+
+    vec3 c = hdr + glow * 0.9;
+    c = aces(c * P.tune.z);
+    vec2 q = (vec2(pix)/vec2(dim))*2.0-1.0;
+    c *= mix(0.82, 1.0, smoothstep(1.7, 0.3, dot(q,q)));   // vignette
+    c = pow(c, vec3(1.0/2.2));                             // gamma
+    imageStore(outImage, pix, vec4(c, 1.0));
+}

@@ -1,0 +1,245 @@
+#version 460
+// Wolfenstein 3D: Path Traced — ray-query compute path tracer.
+//
+// DETERMINISTIC by design: fixed sub-pixel AA offsets, fixed ambient-occlusion
+// directions, hard shadows and sharp reflections. Every frame renders the exact
+// same image for a static scene, so there is NO temporal shimmer/sparkle (the
+// usual curse of a 1-spp stochastic tracer) and no denoiser/accumulation needed.
+// Still unmistakably Wolfenstein: textured walls, alpha-tested sprite shadows,
+// reflective floors, warm lighting; a GPU post pass (post.comp) then adds bloom
+// and filmic (ACES) tone mapping before the cheap RGBA8 readback.
+
+#extension GL_EXT_ray_query : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+const int T_BOX    = 0;   // wall / pushwall
+const int T_FLOOR  = 1;
+const int T_CEIL   = 2;
+const int T_SPRITE = 3;
+const int T_DOOR   = 4;   // thin sliding door panel (flags&1 => vertical)
+
+struct Inst {
+    ivec4 typePages;   // x=type, y=texA, z=texB, w=flags
+    vec4  origin;      // box:(tx,ty,0,-); sprite:(cx,cy,cz,halfSize)
+    vec4  axis;        // sprite camera-right (xyz)
+    vec4  material;    // roughness, metallic, reflectivity, emissive
+};
+struct Light { vec4 posType; vec4 color; vec4 params; };
+
+layout(binding = 0, rgba32f) uniform image2D accumImage;   // linear HDR out (post.comp tone maps it)
+layout(binding = 1, rgba8)   uniform image2D outImage;     // (written by post.comp, not here)
+layout(binding = 2) uniform accelerationStructureEXT tlas;
+layout(binding = 3) uniform sampler2DArray texAtlas;
+layout(binding = 4) readonly buffer Instances { Inst inst[]; };
+layout(binding = 5) readonly buffer Lights     { Light lights[]; };
+layout(binding = 6) uniform Params {
+    vec4  camPos; vec4 camDir; vec4 camRight; vec4 camUp;
+    ivec4 counts;      // numInstances, numLights, accumFrame(unused), bounces
+    vec4  floorColor;  // rgb, w=reflectivity
+    vec4  ceilColor;
+    vec4  tune;        // ambient, shadowStrength, exposure(unused here), frame(unused)
+} P;
+
+vec4 sampleAtlas(int page, vec2 uv){ if(page<0) return vec4(0); return texture(texAtlas, vec3(uv,float(page))); }
+
+void surfaceInfo(int id, vec3 p, out vec2 uv, out vec3 n, out int page, out vec4 mtl, out int type){
+    Inst it = inst[id]; type = it.typePages.x; mtl = it.material;
+    if(type==T_BOX){
+        vec3 c = vec3(it.origin.xy + vec2(0.5), 0.5);
+        vec3 d = p - c; vec3 ad = abs(d);
+        if(ad.x>=ad.y && ad.x>=ad.z){ n=vec3(sign(d.x),0,0); uv=vec2(fract(p.y),1.0-p.z); page=it.typePages.y; }
+        else if(ad.y>=ad.x && ad.y>=ad.z){ n=vec3(0,sign(d.y),0); uv=vec2(fract(p.x),1.0-p.z); page=it.typePages.z; }
+        else { n=vec3(0,0,sign(d.z)); uv=fract(p.xy); page=it.typePages.y; }
+    } else if(type==T_FLOOR){ n=vec3(0,0,1); uv=fract(p.xy); page=it.typePages.y; }
+    else if(type==T_CEIL){ n=vec3(0,0,-1); uv=fract(p.xy); page=it.typePages.y; }
+    else if(type==T_DOOR){
+        // origin.z carries the open amount so the texture slides with the panel
+        // (matching the classic renderer), instead of staying pinned to the world.
+        page = it.typePages.y; float open = it.origin.z;
+        if((it.typePages.w & 1) != 0){ n=vec3((p.x<it.origin.x+0.5)?-1.0:1.0,0,0); uv=vec2(fract(p.y-open),1.0-p.z); }
+        else { n=vec3(0,(p.y<it.origin.y+0.5)?-1.0:1.0,0); uv=vec2(fract(p.x-open),1.0-p.z); }
+    } else { // sprite
+        vec3 c=it.origin.xyz; float hs=it.origin.w; vec3 r=it.axis.xyz;
+        uv=vec2(dot(p-c,r)/(2.0*hs)+0.5, 0.5-dot(p-c,vec3(0,0,1))/(2.0*hs));
+        n=-normalize(P.camDir.xyz); page=it.typePages.y;
+    }
+}
+
+float spriteAlpha(int id, vec3 p){
+    Inst it=inst[id]; vec3 c=it.origin.xyz; float hs=it.origin.w; vec3 r=it.axis.xyz;
+    float u=dot(p-c,r)/(2.0*hs)+0.5, v=0.5-dot(p-c,vec3(0,0,1))/(2.0*hs);
+    if(u<0.0||u>1.0||v<0.0||v>1.0) return 0.0;
+    return sampleAtlas(it.typePages.y, vec2(u,v)).a;
+}
+
+int traceClosest(vec3 origin, vec3 dir, float tmax, out vec3 hitp){
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoneEXT, 0xFF, origin, 0.002, dir, tmax);
+    while(rayQueryProceedEXT(rq)){
+        if(rayQueryGetIntersectionTypeEXT(rq,false)==gl_RayQueryCandidateIntersectionTriangleEXT){
+            int id=rayQueryGetIntersectionInstanceCustomIndexEXT(rq,false);
+            if(inst[id].typePages.x==T_SPRITE){
+                float t=rayQueryGetIntersectionTEXT(rq,false);
+                if(spriteAlpha(id, origin+dir*t)>0.5) rayQueryConfirmIntersectionEXT(rq);
+            } else rayQueryConfirmIntersectionEXT(rq);
+        }
+    }
+    if(rayQueryGetIntersectionTypeEXT(rq,true)==gl_RayQueryCommittedIntersectionNoneEXT) return -1;
+    hitp=origin+dir*rayQueryGetIntersectionTEXT(rq,true);
+    return rayQueryGetIntersectionInstanceCustomIndexEXT(rq,true);
+}
+
+// visibility with alpha-tested sprite occluders (sprite shadows)
+float traceShadow(vec3 origin, vec3 dir, float tmax){
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoneEXT, 0xFF, origin, 0.01, dir, tmax);
+    while(rayQueryProceedEXT(rq)){
+        if(rayQueryGetIntersectionTypeEXT(rq,false)==gl_RayQueryCandidateIntersectionTriangleEXT){
+            int id=rayQueryGetIntersectionInstanceCustomIndexEXT(rq,false);
+            if(inst[id].typePages.x==T_SPRITE){
+                float t=rayQueryGetIntersectionTEXT(rq,false);
+                if(spriteAlpha(id, origin+dir*t)>0.5) rayQueryConfirmIntersectionEXT(rq);
+            } else rayQueryConfirmIntersectionEXT(rq);
+        }
+    }
+    return (rayQueryGetIntersectionTypeEXT(rq,true)==gl_RayQueryCommittedIntersectionNoneEXT)?1.0:0.0;
+}
+
+// opaque-only occlusion for AO (skips sprites -> stable). Returns a SMOOTH
+// distance-weighted factor (0 = near occluder, 1 = open) rather than a binary
+// hit/miss: with only a few fixed AO samples a binary result stair-steps into
+// hard horizontal bands as a sample flips on/off across a surface. Weighting by
+// hit distance turns that into a smooth contact-shadow gradient.
+float traceOcclusion(vec3 origin, vec3 dir, float tmax){
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT|gl_RayFlagsCullNoOpaqueEXT,
+                          0xFF, origin, 0.01, dir, tmax);
+    rayQueryProceedEXT(rq);
+    if(rayQueryGetIntersectionTypeEXT(rq,true)==gl_RayQueryCommittedIntersectionNoneEXT) return 1.0;
+    return smoothstep(0.0, tmax, rayQueryGetIntersectionTEXT(rq,true));
+}
+
+// Fixed AO directions (tangent-space offsets), same every frame -> no shimmer.
+const vec2 AO_DIR[4] = vec2[4](vec2(0.0,0.0), vec2(0.62,0.0),
+                               vec2(-0.31,0.54), vec2(-0.31,-0.54));
+
+vec3 shade(vec3 p, vec3 n, vec3 albedo, vec4 mtl, bool full){
+    vec3 col = vec3(0.0);
+    float ao = 1.0;
+    if(full){
+        vec3 t = normalize(cross(abs(n.z)<0.99?vec3(0,0,1):vec3(1,0,0), n));
+        vec3 b = cross(n,t);
+        float acc = 0.0;
+        for(int i=0;i<4;i++){
+            vec3 d = normalize(t*AO_DIR[i].x + b*AO_DIR[i].y + n*1.0);
+            acc += traceOcclusion(p + n*0.02, d, 0.7);
+        }
+        ao = mix(0.42, 1.0, acc/4.0);
+    }
+
+    float upN = clamp(n.z*0.5+0.5, 0.0, 1.0);
+    vec3 sky = mix(vec3(0.19,0.17,0.16), vec3(0.30,0.34,0.42), upN);
+    col += albedo * sky * P.tune.x * ao;
+
+    int nl = P.counts.y;
+    for(int i=0;i<nl;++i){
+        Light L = lights[i]; int lt=int(L.posType.w);
+        if(lt==6){ col += albedo*L.color.rgb*L.color.w*ao*(0.30+0.30*upN); continue; }
+        vec3 toL = L.posType.xyz - p; float dist=length(toL); float radius=max(L.params.x,0.001);
+        if(dist>radius) continue;
+        vec3 ldir=toL/dist; float ndl=max(dot(n,ldir),0.0);
+        if(ndl<=0.0) continue;
+        float atten=clamp(1.0-dist/radius,0.0,1.0); atten*=atten;
+        float vis = full ? traceShadow(p+n*0.02, ldir, dist-0.04) : 1.0;   // hard shadow
+        vis = mix(1.0-P.tune.y, 1.0, vis);
+        col += albedo*L.color.rgb*(L.color.w*ndl*atten*vis);
+    }
+    col += albedo*mtl.w;
+    return col;
+}
+
+// Fixed 4x rotated-grid sub-pixel offsets (AA + deterministic glossy jitter).
+const vec2 AA_OFF[4] = vec2[4](vec2(-0.125,-0.375), vec2(0.375,-0.125),
+                               vec2(-0.375,0.125),  vec2(0.125,0.375));
+
+vec3 tracePath(vec3 dir, int s){
+    vec3 origin = P.camPos.xyz;
+    vec3 radiance=vec3(0.0), throughput=vec3(1.0);
+    int bounces = P.counts.w;
+    for(int b=0; b<=bounces; ++b){
+        vec3 hitp; int id = traceClosest(origin, dir, 96.0, hitp);
+        if(id<0){ radiance += throughput * vec3(0.02,0.022,0.03); break; }
+        vec2 uv; vec3 n; int page; vec4 mtl; int type;
+        surfaceInfo(id, hitp, uv, n, page, mtl, type);
+
+        // Sprites (enemies/props) keep their original palette identity: a flat,
+        // clamped light level (no fake-normal n.l, no sky wash) so lamps only
+        // slightly tint/brighten them and they never blow out to white.
+        if(type==T_SPRITE){
+            // Flat, clamped light. Local lamps add a little; being shadowed from
+            // a lamp darkens slightly.
+            float light = 0.5;
+            int nls = P.counts.y;
+            for(int i=0;i<nls;++i){
+                Light L = lights[i]; int lt=int(L.posType.w);
+                if(lt==6) continue;
+                vec3 toL = L.posType.xyz - hitp; float d = length(toL);
+                float radius = max(L.params.x, 0.001); if(d>radius) continue;
+                float atten = clamp(1.0-d/radius,0.0,1.0); atten*=atten;
+                float vis = traceShadow(hitp + n*0.02, toL/d, d-0.04);
+                light += atten * vis * 0.12;   // intensity-independent, small
+            }
+            // The palette texture is sRGB/display-space. Convert to linear before
+            // shading so the post ACES+gamma pass reproduces the ORIGINAL sprite
+            // colour instead of lifting mid-tones toward white (the washed look).
+            vec3 sa = sampleAtlas(page,uv).rgb;
+            sa *= sa;                                   // ~sRGB -> linear
+            radiance += throughput * sa * clamp(light, 0.45, 0.85);
+            break;   // no reflection bounce off sprites
+        }
+
+        vec3 albedo = (type==T_FLOOR)?P.floorColor.rgb : (type==T_CEIL)?P.ceilColor.rgb : sampleAtlas(page,uv).rgb;
+        radiance += throughput * shade(hitp, n, albedo, mtl, b==0);   // full quality on primary only
+        // Only the floor reflects (walls/doors are matte, reflectivity 0). Keep
+        // it a soft, dim, heavily-blurred sheen so it reads as polished stone,
+        // never a mirror image of the room.
+        float refl = (type==T_FLOOR) ? P.floorColor.w : mtl.z;
+        if(b<bounces && type==T_FLOOR && refl>0.02){
+            float fres = refl + (1.0-refl)*pow(1.0-max(dot(-dir,n),0.0), 5.0);
+            fres = min(fres, 0.07);
+            throughput *= fres * (0.55*mix(vec3(1.0), albedo, 0.5));
+            dir = reflect(dir, n); origin = hitp + n*0.02;
+            vec3 t = normalize(cross(vec3(1,0,0), n));
+            vec3 bt = cross(n, t);
+            dir = normalize(dir + (t*AA_OFF[s].x + bt*AA_OFF[s].y) * 0.6);  // wide gloss
+        } else break;
+    }
+    radiance = min(radiance, vec3(6.0));
+    if(any(isnan(radiance)) || any(isinf(radiance))) radiance = vec3(0.0);
+    return radiance;
+}
+
+vec3 aces(vec3 x){
+    const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
+void main(){
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dim = imageSize(outImage);
+    if(pix.x>=dim.x || pix.y>=dim.y) return;
+
+    // Deterministic 4x AA (fixed sub-samples): stable, no shimmer.
+    vec3 radiance = vec3(0.0);
+    for(int s=0;s<4;++s){
+        vec2 ndc = (vec2(pix)+0.5+AA_OFF[s])/vec2(dim)*2.0-1.0;
+        vec3 dir = normalize(P.camDir.xyz + ndc.x*P.camRight.w*P.camRight.xyz - ndc.y*P.camUp.w*P.camUp.xyz);
+        radiance += tracePath(dir, s);
+    }
+    radiance *= 0.25;
+
+    // Write LINEAR HDR; the post pass (post.comp) adds bloom and tone maps to
+    // RGBA8 on the GPU (keeps readback cheap).
+    imageStore(accumImage, pix, vec4(radiance, 1.0));
+}

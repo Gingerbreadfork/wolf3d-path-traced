@@ -1,0 +1,21 @@
+# Build output
+/build/
+/build-*/
+*.o
+*.spv
+
+# Screenshots / captures
+/shots/
+*.bmp
+
+# Commercial game data — NOT redistributable, so never commit it (supply your
+# own; the engine auto-detects it). The shareware Episode 1 (*.wl1) IS bundled in
+# assets/data/ and is intentionally tracked.
+/assets/data/*.wl6
+/assets/data/*.sod
+/assets/data/*.sd?
+
+# Editor / OS
+*.swp
+.DS_Store
+compile_commands.json
