@@ -1,0 +1,17 @@
+Full edition -- supply your own data
+====================================
+
+This is the FULL build (registered Wolfenstein 3D, all six episodes). It does
+NOT include game data: that data is copyrighted and not redistributable, so you
+must provide your own from a copy you own (GOG, Steam, the original discs, ...).
+
+Copy these eight files into THIS folder, renamed to LOWERCASE:
+
+    vswap.wl6     gamemaps.wl6   maphead.wl6    audiohed.wl6
+    audiot.wl6    vgadict.wl6    vgagraph.wl6   vgahead.wl6
+
+Retail installs usually ship them UPPERCASE (VSWAP.WL6, ...). Rename to lowercase
+-- filenames are case-sensitive on Linux and the engine looks for lowercase.
+
+Then run the wolf3d-pt executable in the parent folder. If you only have the
+shareware data (*.wl1), use the shareware build instead.

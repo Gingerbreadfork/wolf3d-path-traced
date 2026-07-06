@@ -1,8 +1,10 @@
 Wolfenstein 3D: Path Traced
 ===========================
 
-Run the wolf3d-pt executable in this folder. The shareware Episode 1 data and the
-compiled shaders ship alongside it, so there is nothing else to install.
+Run the wolf3d-pt executable in this folder. The compiled shaders ship alongside
+it. The SHAREWARE build also bundles the Episode 1 data, so there is nothing else
+to install. The FULL build expects you to supply your own registered data files
+in the data/ folder -- see data/README.txt.
 
 Requirements
 ------------

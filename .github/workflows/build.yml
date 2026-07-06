@@ -1,8 +1,11 @@
 name: Build
 
-# Builds ready-to-run Linux and Windows packages (binary + shaders + shareware
-# data). Every push/PR uploads artifacts you can download from the run; pushing a
-# tag like `v1.0` also publishes them as a GitHub Release.
+# Builds ready-to-run Linux and Windows packages for BOTH editions:
+#   * shareware -- bundles the freely distributable Episode 1 data (playable as-is)
+#   * full      -- built for registered data (all 6 episodes); ships the engine
+#                  only, you supply your own *.wl6 files (copyrighted, NOT bundled)
+# Every push/PR uploads artifacts you can download from the run; pushing a tag like
+# `v1.0` also publishes them as a GitHub Release.
 #
 # macOS is intentionally absent: the path tracer needs Vulkan hardware ray
 # tracing (VK_KHR_ray_query), which MoltenVK does not implement.
@@ -21,6 +24,10 @@ jobs:
   # ---------------------------------------------------------------- Linux ----
   linux:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [ shareware, full ]
     steps:
       - uses: actions/checkout@v7
 
@@ -32,27 +39,37 @@ jobs:
 
       - name: Configure & build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          FLAGS=""
+          if [ "${{ matrix.edition }}" = "full" ]; then FLAGS="-DWOLF_FULL=ON"; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release $FLAGS
           cmake --build build
 
       - name: Package
         run: |
-          PKG=wolf3d-path-traced-linux
+          PKG=wolf3d-path-traced-linux-${{ matrix.edition }}
           mkdir -p "$PKG/shaders" "$PKG/data"
           cp build/wolf3d-pt        "$PKG/"
           cp build/shaders/*.spv    "$PKG/shaders/"
-          cp assets/data/*.wl1      "$PKG/data/"
           cp .github/PLAY.txt       "$PKG/" 2>/dev/null || true
+          if [ "${{ matrix.edition }}" = "shareware" ]; then
+            cp assets/data/*.wl1 "$PKG/data/"
+          else
+            cp .github/DATA-FULL.txt "$PKG/data/README.txt"
+          fi
           tar czf "$PKG.tar.gz" "$PKG"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wolf3d-path-traced-linux
-          path: wolf3d-path-traced-linux.tar.gz
+          name: wolf3d-path-traced-linux-${{ matrix.edition }}
+          path: wolf3d-path-traced-linux-${{ matrix.edition }}.tar.gz
 
   # -------------------------------------------------------------- Windows ----
   windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [ shareware, full ]
     defaults:
       run:
         shell: msys2 {0}
@@ -65,6 +82,7 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
+            zip
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
@@ -76,26 +94,33 @@ jobs:
 
       - name: Configure & build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          FLAGS=""
+          if [ "${{ matrix.edition }}" = "full" ]; then FLAGS="-DWOLF_FULL=ON"; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release $FLAGS
           cmake --build build
 
       - name: Package
         run: |
-          PKG=wolf3d-path-traced-windows
+          PKG=wolf3d-path-traced-windows-${{ matrix.edition }}
           mkdir -p "$PKG/shaders" "$PKG/data"
           cp build/wolf3d-pt.exe    "$PKG/"
           cp build/shaders/*.spv    "$PKG/shaders/"
-          cp assets/data/*.wl1      "$PKG/data/"
           cp .github/PLAY.txt       "$PKG/" 2>/dev/null || true
+          if [ "${{ matrix.edition }}" = "shareware" ]; then
+            cp assets/data/*.wl1 "$PKG/data/"
+          else
+            cp .github/DATA-FULL.txt "$PKG/data/README.txt"
+          fi
           # Bundle the MinGW/SDL2 runtime DLLs the exe links against (the Vulkan
           # loader, vulkan-1.dll, is provided by the user's GPU driver).
           ldd "$PKG/wolf3d-pt.exe" | awk '/\/mingw64\/bin\// {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" "$PKG/"; done
+          zip -r "$PKG.zip" "$PKG"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wolf3d-path-traced-windows
-          path: wolf3d-path-traced-windows
+          name: wolf3d-path-traced-windows-${{ matrix.edition }}
+          path: wolf3d-path-traced-windows-${{ matrix.edition }}.zip
 
   # -------------------------------------------------- Release (on v* tags) ---
   release:
@@ -107,14 +132,9 @@ jobs:
         with:
           path: dist
 
-      - name: Zip the Windows package
-        run: |
-          cd dist
-          zip -r wolf3d-path-traced-windows.zip wolf3d-path-traced-windows
-
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            dist/wolf3d-path-traced-linux/wolf3d-path-traced-linux.tar.gz
-            dist/wolf3d-path-traced-windows.zip
+            dist/**/*.tar.gz
+            dist/**/*.zip
