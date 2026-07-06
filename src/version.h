@@ -7,7 +7,10 @@
 
 //#define SPEAR
 //#define SPEARDEMO
-#define UPLOAD
+// The edition is selected by CMake (WOLF_FULL option), which defines exactly one
+// of UPLOAD (shareware Episode 1, gfxv_apo.h) or GOODTIMES (full retail, all 6
+// episodes, gfxv_wl6.h). Do not hard-define them here or both builds break.
+//#define UPLOAD
 //#define GOODTIMES
 #define CARMACIZED
 //#define APOGEE_1_0

@@ -10,10 +10,18 @@
 
 # Commercial game data — NOT redistributable, so never commit it (supply your
 # own; the engine auto-detects it). The shareware Episode 1 (*.wl1) IS bundled in
-# assets/data/ and is intentionally tracked.
+# assets/data/ and is intentionally tracked. Patterns are duplicated in upper case
+# because Linux is case-sensitive and the GOG/retail files ship as *.WL6 etc.
 /assets/data/*.wl6
+/assets/data/*.wl3
 /assets/data/*.sod
 /assets/data/*.sd?
+/assets/data/*.wj?
+/assets/data/*.WL6
+/assets/data/*.WL3
+/assets/data/*.SOD
+/assets/data/*.SD?
+/assets/data/*.WJ?
 
 # Editor / OS
 *.swp

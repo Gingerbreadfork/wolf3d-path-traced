@@ -106,8 +106,24 @@ target_compile_options(wolf3d-pt PRIVATE
 )
 
 # NOTE: do NOT define VERSIONALREADYCHOSEN — that would disable version.h's
-# version selection (UPLOAD / CARMACIZED for shareware v1.4).
+# common version selection (CARMACIZED for v1.4).
 target_compile_definitions(wolf3d-pt PRIVATE _GNU_SOURCE)
+
+# ---- Game edition (shareware vs full) ---------------------------------------
+# The graphics/sound chunk-index tables are chosen at COMPILE time (gfxv_apo.h for
+# shareware, gfxv_wl6.h for full) and differ, so a single binary can only target
+# one edition. Default to the bundled shareware Episode 1 (redistributable); set
+# -DWOLF_FULL=ON to build against full retail data (VSWAP.WL6 etc., all 6 episodes)
+# that you supply yourself in assets/data/. The runtime still auto-detects the
+# matching data files, so the correct build just works with what's present.
+option(WOLF_FULL "Build against full retail Wolfenstein 3D data instead of the bundled shareware Episode 1" OFF)
+if(WOLF_FULL)
+    target_compile_definitions(wolf3d-pt PRIVATE GOODTIMES)   # gfxv_wl6.h, 6 episodes
+    message(STATUS "Wolfenstein edition: FULL (expects *.wl6 data in assets/data/)")
+else()
+    target_compile_definitions(wolf3d-pt PRIVATE UPLOAD)      # gfxv_apo.h, shareware Ep.1
+    message(STATUS "Wolfenstein edition: SHAREWARE (bundled Episode 1, *.wl1)")
+endif()
 
 # ---- Shader compilation (GLSL -> SPIR-V) ------------------------------------
 find_program(GLSLC glslc)
