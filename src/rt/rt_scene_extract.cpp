@@ -56,9 +56,26 @@ static int CalcRotateWorld(objtype *ob) {
     return angle / (ANGLES / 8);
 }
 
+// Projectiles (rockets, fireballs, needles, sparks) glow and cast a moving
+// coloured light as they fly. Returns false for ordinary actors; otherwise fills
+// the projectile's glow colour.
+static bool ProjectileGlow(classtype oc, float &r, float &g, float &b) {
+    switch (oc) {
+        case rocketobj: case hrocketobj: r=1.00f; g=0.55f; b=0.22f; return true; // rocket exhaust
+        case fireobj:                    r=1.00f; g=0.42f; b=0.14f; return true; // fireball
+        case needleobj:                  r=0.45f; g=1.00f; b=0.45f; return true; // syringe
+        case sparkobj:                   r=0.55f; g=0.75f; b=1.00f; return true; // spark
+        default:                         return false;
+    }
+}
+
 namespace rt {
 
 void ExtractScene(Scene &s) {
+    // Projectile glow lights, collected during the actor scan and added after
+    // lights::Build() (which clears s.lights).
+    struct ProjLight { float x, y, r, g, b; };
+    std::vector<ProjLight> projGlow;
     int level = gamestate.mapon;
 
     // --- Camera --------------------------------------------------------------
@@ -169,6 +186,12 @@ void ExtractScene(Scene &s) {
         sp.texPage = shape;
         sp.kind = 1;
         sp.emissive = 0.0f;
+        float gr, gg, gb;
+        if (ProjectileGlow(ob->obclass, gr, gg, gb)) {
+            sp.kind = 2;            // projectile
+            sp.emissive = 0.9f;     // the sprite itself glows (blooms in post)
+            projGlow.push_back({sp.x, sp.y, gr, gg, gb});
+        }
         s.sprites.push_back(sp);
     }
 
@@ -204,6 +227,20 @@ void ExtractScene(Scene &s) {
             L.type = lights::LT_CEILING;
             s.lights.push_back(L);
         }
+    }
+
+    // Dynamic projectile lights: a rocket / fireball / needle lights the corridor
+    // and the reflective floor as it flies past — the same moving-point-light trick
+    // as the muzzle flash, attached to the projectile actor.
+    for (const auto &pg : projGlow) {
+        rt::LightInst L{};
+        L.x = pg.x; L.y = pg.y; L.z = 0.5f;   // travels at ~eye height
+        L.r = pg.r; L.g = pg.g; L.b = pg.b;
+        L.intensity = 2.6f;
+        L.radius = 4.5f;
+        L.type = lights::LT_MUZZLE;           // bright moving point light
+        L.flicker = 0;
+        s.lights.push_back(L);
     }
 }
 

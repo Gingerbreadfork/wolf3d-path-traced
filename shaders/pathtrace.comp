@@ -195,7 +195,10 @@ vec3 tracePath(vec3 dir, int s){
             // colour instead of lifting mid-tones toward white (the washed look).
             vec3 sa = sampleAtlas(page,uv).rgb;
             sa *= sa;                                   // ~sRGB -> linear
-            radiance += throughput * sa * clamp(light, 0.45, 0.85);
+            // Emissive projectiles (rockets/fireballs/needles) glow: add self-
+            // illumination on top of the flat light so the sprite reads as hot and
+            // blooms in the post pass (mtl.w = 0 for ordinary enemies/props).
+            radiance += throughput * sa * (clamp(light, 0.45, 0.85) + mtl.w * 2.2);
             break;   // no reflection bounce off sprites
         }
 
