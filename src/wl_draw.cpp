@@ -1047,19 +1047,20 @@ void CalcTics (void)
     if (lasttimecount > (int32_t) GetTimeCount())
         lasttimecount = GetTimeCount();    // if the game was paused a LONG time
 
-    uint32_t curtime = SDL_GetTicks();
-    tics = (curtime * 7) / 100 - lasttimecount;
-    if(!tics)
-    {
-        // wait until end of current tic
-        SDL_Delay(((lasttimecount + 1) * 100) / 7 - curtime);
-        tics = 1;
-    }
+    // Wait until at least one 70Hz tic has actually elapsed since the last frame,
+    // so gameplay advances at a true 70Hz regardless of the display's refresh rate.
+    // The previous approach delayed a fixed number of MILLISECONDS to the next tic
+    // boundary, but that sub-tic wait rounds down to 0ms on high-refresh displays,
+    // so the loop free-ran at the refresh rate and handed out one tic every frame
+    // (e.g. 2x too fast at 144Hz). Polling GetTimeCount() caps it correctly and is
+    // robust to SDL_Delay() granularity.
+    int32_t elapsed;
+    while ((elapsed = (int32_t) GetTimeCount() - lasttimecount) < 1)
+        SDL_Delay (1);
 
-    lasttimecount += tics;
+    lasttimecount += elapsed;                       // track real time (uncapped)
 
-    if (tics>MAXTICS)
-        tics = MAXTICS;
+    tics = (elapsed > MAXTICS) ? MAXTICS : (unsigned) elapsed;   // clamp the game step
 }
 
 

@@ -35,6 +35,11 @@ void PLAT_Shutdown(void);
 SDL_Window *PLAT_Window(void);
 void        PLAT_WindowSize(int *w, int *h);
 
+// Toggle borderless desktop fullscreen at runtime (bound to Alt+Enter). Returns
+// the resulting state: 1 = fullscreen, 0 = windowed. The Vulkan swapchain
+// recreates itself on the next present when the drawable size changes.
+int         PLAT_ToggleFullscreen(void);
+
 // Caption / mouse helpers used by the SDL 1.2 compatibility shims.
 void Plat_SetCaption(const char *title);
 void Plat_SetRelativeMouse(int enabled);

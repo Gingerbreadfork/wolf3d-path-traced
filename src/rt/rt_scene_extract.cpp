@@ -208,3 +208,11 @@ void ExtractScene(Scene &s) {
 }
 
 } // namespace rt
+
+// True when a classic-only present of the 3D view is a DISSOLVE that must show the
+// classic view itself: the death fizzle (reddening) or a respawn/secret fizzle-in.
+// A plain palette fade-in (fizzlein == 0, not dying) returns false, so the renderer
+// fades the path-traced view in instead of the flat classic one.
+extern "C" int RT_ClassicViewIsFizzle(void) {
+    return (playstate == ex_died || fizzlein) ? 1 : 0;
+}

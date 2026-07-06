@@ -15,6 +15,7 @@
 #include "rt_materials.h"
 #include "../compare/compare_renderer.h"
 #include "../platform/autopilot.h"
+#include "../platform/platform.h"        // PLAT_WindowSize (widescreen aspect)
 #include <vector>
 #include <string.h>
 #include <stdio.h>
@@ -22,6 +23,8 @@
 
 // Implemented in rt_scene_extract.cpp
 namespace rt { void ExtractScene(Scene &s); }
+extern "C" int   RT_ClassicViewIsFizzle(void);   // death / respawn dissolve (keep classic)
+extern "C" float RT_FadeBrightness(void);        // 0..1 palette-fade level (HUD-synced)
 
 namespace {
 
@@ -42,11 +45,42 @@ int                  g_classicW = 0, g_classicH = 0;
 float                g_wipePos = 0.5f;      // 0..1 wipe position
 float                g_wipeDir = 0.20f;     // wipe animation speed (per frame)
 
-// Final composite resolution (3x the classic 320x200).
-constexpr int kFinalW = 960, kFinalH = 600;
-constexpr int kScale  = kFinalW / 320;       // 3
+// True when the classic buffer currently holds a freshly-rendered 3D gameplay
+// view (set by RENDER_Frame3D), so a classic-only present that follows — the
+// level-start palette fade-in or the death fizzle, neither of which produces a
+// path-traced frame — is still composited into the widescreen layout instead of
+// snapping to 4:3. Cleared by RENDER_Notify2DScreen() when the game draws a
+// full-screen 2D screen (menu / "Get Psyched" / intermission).
+bool                 g_classic3DView = false;
+
+// Final composite resolution. Height is fixed at 3x the classic 320x200 (600);
+// WIDTH is dynamic for Hor+ widescreen (see UpdateFinalWidth). The vertical
+// layout — 480px path-traced 3D region + 120px HUD strip — never changes.
+constexpr int kFinalH = 600;
+constexpr int kScale  = 3;                   // 320*3 -> 960 authored HUD width
 constexpr int kHudLines = 40;                // classic status bar height (px)
 constexpr int kPtViewH = kFinalH - kHudLines * kScale;   // 480 (PT 3D region)
+constexpr int kHudW   = 320 * kScale;        // 960: native (un-stretched) HUD width
+constexpr int kFinalWMin = kHudW;            // never narrower than HUD / classic view
+constexpr int kFinalWMax = 1680;             // ~21:9 cap
+
+int g_finalW = kHudW;                         // dynamic composite width (widescreen)
+
+// Recompute the composite width from the live SWAPCHAIN aspect. Frames are
+// authored square-pixel then displayed with the classic 1.2x VGA vertical stretch
+// (height 600 -> 720 on screen), so a width of 720*aspect fills the surface with no
+// bars. Deriving from the swapchain extent (not the SDL window size) is what makes
+// this exact: the present letterbox uses that same extent, and on Wayland the SDL
+// window size can disagree with the real surface. Clamped to [4:3, ~21:9], even.
+void UpdateFinalWidth() {
+    int sw = 0, sh = 0;
+    rtvk::SwapchainSize(&sw, &sh);
+    if (sw <= 0 || sh <= 0) { g_finalW = kHudW; return; }
+    int w = (int)(720.0f * (float)sw / (float)sh + 0.5f);   // 720 = kFinalH * 1.2
+    if (w < kFinalWMin) w = kFinalWMin;
+    if (w > kFinalWMax) w = kFinalWMax;
+    g_finalW = w & ~1;                        // even
+}
 
 std::vector<uint32_t> g_ptComposited;        // PT 3D + classic HUD + weapon
 
@@ -56,7 +90,7 @@ void OverlayWeapon(std::vector<uint32_t> &dst) {
     static uint32_t wpn[64 * 64];
     mat::DecodeSprite(g_scene.weaponFrame, wpn);
     int S = kPtViewH;                        // scale weapon to fill viewport height
-    int ox = kFinalW / 2 - S / 2;
+    int ox = g_finalW / 2 - S / 2;           // horizontally centered in the wide frame
     int oy = kPtViewH - S;                   // bottom-aligned within the 3D region
     for (int dy = 0; dy < S; ++dy) {
         int fy = oy + dy;
@@ -66,8 +100,8 @@ void OverlayWeapon(std::vector<uint32_t> &dst) {
             uint32_t p = wpn[sy * 64 + (dx * 64 / S)];
             if ((p >> 24) < 128) continue;   // transparent
             int fx = ox + dx;
-            if (fx < 0 || fx >= kFinalW) continue;
-            dst[fy * kFinalW + fx] = p;
+            if (fx < 0 || fx >= g_finalW) continue;
+            dst[fy * g_finalW + fx] = p;
         }
     }
 }
@@ -75,22 +109,81 @@ void OverlayWeapon(std::vector<uint32_t> &dst) {
 // Build the 960x600 path-traced frame: PT 3D world on top, classic HUD strip
 // and player weapon composited so the frame is complete and aligns with classic.
 void BuildPTComposite(const uint32_t *classic, int cw, int ch) {
-    g_ptComposited.assign((size_t)kFinalW * kFinalH, 0xFF000000u);
+    g_ptComposited.assign((size_t)g_finalW * kFinalH, 0xFF000000u);
 
-    // top: PT 3D (g_ptFrame is kFinalW x kPtViewH)
-    if (g_ptW == kFinalW && g_ptH == kPtViewH)
-        memcpy(g_ptComposited.data(), g_ptFrame.data(), (size_t)kFinalW * kPtViewH * 4);
+    // top: PT 3D (g_ptFrame is g_finalW x kPtViewH, full width)
+    if (g_ptW == g_finalW && g_ptH == kPtViewH)
+        memcpy(g_ptComposited.data(), g_ptFrame.data(), (size_t)g_finalW * kPtViewH * 4);
 
     OverlayWeapon(g_ptComposited);
 
-    // bottom: classic HUD strip (classic rows [ch-kHudLines, ch)) upscaled
+    // bottom: classic HUD strip upscaled to its NATIVE 960px width and centered;
+    // the wide side margins stay black (the status bar is fixed 320px art with no
+    // wider version, so centering — not stretching — is the correct widescreen
+    // treatment). The status bar is STATUSLINES(40)/200 of the classic buffer, so
+    // srcHud scales with the buffer height (e.g. 80 rows of a 640x400 buffer).
     int hudRows = kFinalH - kPtViewH;
+    int srcHud  = ch / 5;
+    int hudX0 = (g_finalW - kHudW) / 2;
     for (int y = 0; y < hudRows; ++y) {
-        int cy = (ch - kHudLines) + y * kHudLines / hudRows;
+        int cy = (ch - srcHud) + y * srcHud / hudRows;
         if (cy < 0 || cy >= ch) continue;
-        for (int x = 0; x < kFinalW; ++x) {
-            int cx = x * cw / kFinalW;
-            g_ptComposited[(size_t)(kPtViewH + y) * kFinalW + x] = classic[cy * cw + cx];
+        uint32_t *row = &g_ptComposited[(size_t)(kPtViewH + y) * g_finalW];
+        for (int x = 0; x < kHudW; ++x) {
+            int cx = x * cw / kHudW;
+            row[hudX0 + x] = classic[cy * cw + cx];
+        }
+    }
+}
+
+// Build the widescreen composite from a CLASSIC frame that still contains the
+// live 3D viewport but produced no path-traced frame this present — the level-
+// start palette fade-in and the death fizzle-fade both re-present / draw into the
+// classic buffer directly. Uses the SAME layout as the path-traced composite —
+// view stretched to full width on top, HUD centered below — so those transitions
+// keep the gameplay aspect instead of snapping to 4:3.
+void BuildClassicWideComposite(const uint32_t *classic, int cw, int ch) {
+    g_ptComposited.assign((size_t)g_finalW * kFinalH, 0xFF000000u);
+
+    // top: classic view region [0, ch-srcHud) upscaled to g_finalW x kPtViewH
+    int srcHud = ch / 5;                 // status bar = STATUSLINES(40)/200 of buffer
+    int viewRows = ch - srcHud;
+    if (viewRows < 1) viewRows = ch;
+    for (int y = 0; y < kPtViewH; ++y) {
+        int cy = y * viewRows / kPtViewH;
+        if (cy >= ch) cy = ch - 1;
+        uint32_t *row = &g_ptComposited[(size_t)y * g_finalW];
+        for (int x = 0; x < g_finalW; ++x)
+            row[x] = classic[cy * cw + (x * cw / g_finalW)];
+    }
+
+    // bottom: classic HUD strip at native 960 width, centered (matches gameplay)
+    int hudRows = kFinalH - kPtViewH;
+    int hudX0 = (g_finalW - kHudW) / 2;
+    for (int y = 0; y < hudRows; ++y) {
+        int cy = (ch - srcHud) + y * srcHud / hudRows;
+        if (cy < 0 || cy >= ch) continue;
+        uint32_t *row = &g_ptComposited[(size_t)(kPtViewH + y) * g_finalW];
+        for (int x = 0; x < kHudW; ++x)
+            row[hudX0 + x] = classic[cy * cw + (x * cw / kHudW)];
+    }
+}
+
+// Scale the 3D-view region (top kPtViewH rows) of the composite by brightness b in
+// [0,1], leaving the HUD strip untouched (it fades via the classic game palette).
+// Used to fade the path-traced view in at level start in sync with that palette.
+void FadeViewRegion(float b) {
+    if (b >= 0.999f) return;
+    if (b < 0.0f) b = 0.0f;
+    uint32_t bi = (uint32_t)(b * 256.0f);            // 8.8 fixed-point multiplier
+    for (int y = 0; y < kPtViewH; ++y) {
+        uint32_t *row = &g_ptComposited[(size_t)y * g_finalW];
+        for (int x = 0; x < g_finalW; ++x) {
+            uint32_t p = row[x];                     // packed 0xAABBGGRR
+            uint32_t r = ((p & 0xFF) * bi) >> 8;
+            uint32_t g = (((p >> 8) & 0xFF) * bi) >> 8;
+            uint32_t bl = (((p >> 16) & 0xFF) * bi) >> 8;
+            row[x] = 0xFF000000u | (bl << 16) | (g << 8) | r;
         }
     }
 }
@@ -102,6 +195,27 @@ void Compose(const uint32_t *classic, int cw, int ch) {
                    g_mode == RM_WIPE || g_mode == RM_FREEZE);
 
     if (!havePT) {
+        // A classic-only present. If it's still the gameplay 3D view (level-start
+        // fade-in, death fizzle) in a path-traced mode, present it widescreen so it
+        // doesn't snap to 4:3. Full-screen 2D screens (menus, "Get Psyched",
+        // intermissions) cleared g_classic3DView and stay at their native 4:3, as
+        // does everything in the Classic render mode.
+        if (g_classic3DView && g_mode != RM_CLASSIC && cw > 0 && ch > kHudLines) {
+            if (RT_ClassicViewIsFizzle()) {
+                // Death fizzle (reddening) or a fizzle-in dissolve: show the classic
+                // view itself, composited widescreen.
+                BuildClassicWideComposite(classic, cw, ch);
+            } else {
+                // Level-start palette fade-in: fade the PATH-TRACED view in instead
+                // of the flat classic renderer (no more "old renderer" flash). The
+                // view is static during the fade, so reuse the last PT frame and
+                // sync its brightness to the classic palette fade driving the HUD.
+                BuildPTComposite(classic, cw, ch);
+                FadeViewRegion(RT_FadeBrightness());
+            }
+            rtvk::PresentRGBA(g_ptComposited.data(), g_finalW, kFinalH);
+            return;
+        }
         g_compose.assign(classic, classic + (size_t)cw * ch);
         rtvk::PresentRGBA(g_compose.data(), cw, ch);
         return;
@@ -110,7 +224,7 @@ void Compose(const uint32_t *classic, int cw, int ch) {
     BuildPTComposite(classic, cw, ch);
 
     if (g_mode == RM_PATHTRACED) {
-        rtvk::PresentRGBA(g_ptComposited.data(), kFinalW, kFinalH);
+        rtvk::PresentRGBA(g_ptComposited.data(), g_finalW, kFinalH);
         return;
     }
 
@@ -119,7 +233,7 @@ void Compose(const uint32_t *classic, int cw, int ch) {
                                       : compare::FREEZE;
     int ow, oh;
     compare::Composite(layout, classic, cw, ch, g_ptComposited.data(),
-                       kFinalW, kFinalH, g_wipePos, g_compose, &ow, &oh);
+                       g_finalW, kFinalH, g_wipePos, g_compose, &ow, &oh);
     rtvk::PresentRGBA(g_compose.data(), ow, oh);
 }
 
@@ -157,11 +271,16 @@ void RENDER_Frame3D(void) {
     if (g_mode != RM_FREEZE)
         rt::ExtractScene(g_scene);
 
+    UpdateFinalWidth();                       // widescreen: track live window aspect
     bool needPT = (g_mode != RM_CLASSIC) && rtpt::Ready();
     if (needPT) {
-        rtpt::DesiredResolution(&g_ptW, &g_ptH);
+        g_ptW = g_finalW;                     // Hor+ widescreen 3D view (full width)
+        g_ptH = kPtViewH;                     // 480 (fixed)
         g_ptFrame.resize((size_t)g_ptW * g_ptH);
         rtpt::Render(g_scene, g_ptFrame.data(), g_ptW, g_ptH);
+        // The classic buffer now holds a live 3D view; a classic-only present that
+        // follows without a fresh PT frame (fade-in, death fizzle) stays widescreen.
+        g_classic3DView = true;
     }
     g_have3D = true;
 
@@ -170,6 +289,12 @@ void RENDER_Frame3D(void) {
         if (g_wipePos > 0.95f) { g_wipePos = 0.95f; g_wipeDir = -fabsf(g_wipeDir); }
         if (g_wipePos < 0.05f) { g_wipePos = 0.05f; g_wipeDir =  fabsf(g_wipeDir); }
     }
+}
+
+void RENDER_Notify2DScreen(void) {
+    // The game is about to draw a full-screen 2D screen over the classic buffer;
+    // the next classic-only present is no longer the 3D view, so show it at 4:3.
+    g_classic3DView = false;
 }
 
 void RENDER_PresentClassic(const uint32_t *classicRGBA, int w, int h) {
@@ -220,7 +345,7 @@ void RENDER_Screenshot(int which) {
         BuildPTComposite(g_classicFrame.data(), g_classicW, g_classicH);
     const uint32_t *pt = g_ptComposited.empty() ? nullptr : g_ptComposited.data();
     SHOT_Capture(which, classic, g_classicW, g_classicH,
-                 pt, pt ? kFinalW : 0, pt ? kFinalH : 0);
+                 pt, pt ? g_finalW : 0, pt ? kFinalH : 0);
 }
 
 } // extern "C"

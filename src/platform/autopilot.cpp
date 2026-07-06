@@ -2,6 +2,7 @@
 
 #include "autopilot.h"
 #include "../rt/render_api.h"
+#include "platform.h"           // PLAT_ToggleFullscreen (scripted 'fullscreen' verb)
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -163,6 +164,9 @@ void AUTO_Tick(void) {
         } else if (ac.verb == "shot") {
             RENDER_Screenshot(0);
             printf("[auto] %ums screenshot\n", now);
+        } else if (ac.verb == "fullscreen") {
+            int fs = PLAT_ToggleFullscreen();
+            printf("[auto] %ums fullscreen -> %s\n", now, fs ? "on" : "off");
         } else if (ac.verb == "quit") {
             printf("[auto] %ums quit\n", now);
             SDL_Event e; SDL_zero(e); e.type = SDL_QUIT; SDL_PushEvent(&e);

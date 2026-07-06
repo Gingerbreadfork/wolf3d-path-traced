@@ -56,6 +56,11 @@ bool Init(int windowW, int windowH);
 void Shutdown();
 bool Ready();
 
+// Current swapchain dimensions in pixels (the real presented surface size). The
+// renderer derives its widescreen composite width from this so the composite
+// aspect always matches what PresentRGBA letterboxes into (i.e. it fills).
+void SwapchainSize(int *w, int *h);
+
 // --- Generic helpers used by the renderer/accel code ------------------------
 uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props);
 
@@ -75,8 +80,9 @@ void TransitionImage(VkCommandBuffer cb, VkImage image, VkImageLayout from,
                      VkImageLayout to, VkImageAspectFlags aspect);
 
 // --- Final presentation -----------------------------------------------------
-// Provide the final composited RGBA8 frame (renderW x renderH). It is blitted
-// to the swapchain (nearest-filtered, 4:3 letterboxed) and presented.
+// Provide the final composited RGBA8 frame (renderW x renderH). It is blitted to
+// the swapchain (nearest-filtered) and presented, letterboxed to preserve the
+// frame's display aspect (source aspect / 1.2 for the classic VGA pixel stretch).
 void PresentRGBA(const uint32_t *rgba, int renderW, int renderH);
 
 VkShaderModule LoadShader(const char *spvFile);

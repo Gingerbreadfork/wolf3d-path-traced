@@ -331,6 +331,24 @@ static void DestroySwapchain() {
     g_ctx.swapchain = VK_NULL_HANDLE;
 }
 
+// The size the swapchain SHOULD be right now: the surface's fixed extent when it
+// dictates one, otherwise (currentExtent "undefined", common on Wayland) the real
+// drawable pixel size, clamped to the surface's allowed range.
+static VkExtent2D DesiredSwapExtent(const VkSurfaceCapabilitiesKHR &caps) {
+    VkExtent2D e = caps.currentExtent;
+    if (e.width == 0xFFFFFFFF) {
+        int w = 0, h = 0;
+        SDL_Vulkan_GetDrawableSize(PLAT_Window(), &w, &h);
+        if (w <= 0 || h <= 0) PLAT_WindowSize(&w, &h);
+        e.width = (uint32_t)w; e.height = (uint32_t)h;
+        if (e.width  < caps.minImageExtent.width)  e.width  = caps.minImageExtent.width;
+        if (e.width  > caps.maxImageExtent.width)  e.width  = caps.maxImageExtent.width;
+        if (e.height < caps.minImageExtent.height) e.height = caps.minImageExtent.height;
+        if (e.height > caps.maxImageExtent.height) e.height = caps.maxImageExtent.height;
+    }
+    return e;
+}
+
 static bool CreateSwapchain() {
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_ctx.phys, g_ctx.surface, &caps);
@@ -346,11 +364,7 @@ static bool CreateSwapchain() {
             f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { chosen = f; break; }
     g_ctx.swapFormat = chosen.format;
 
-    VkExtent2D extent = caps.currentExtent;
-    if (extent.width == 0xFFFFFFFF) {
-        int w, h; PLAT_WindowSize(&w, &h);
-        extent.width = w; extent.height = h;
-    }
+    VkExtent2D extent = DesiredSwapExtent(caps);
     g_ctx.swapExtent = extent;
     // A minimised window reports a 0x0 extent, which is invalid for a swapchain.
     // Leave the swapchain null; PresentRGBA skips and retries when it grows back.
@@ -433,6 +447,11 @@ void Shutdown() {
 
 bool Ready() { return g_ready; }
 
+void SwapchainSize(int *w, int *h) {
+    if (w) *w = (int)g_ctx.swapExtent.width;
+    if (h) *h = (int)g_ctx.swapExtent.height;
+}
+
 static void EnsureSrcImage(int w, int h) {
     if (g_srcW == w && g_srcH == h && g_srcImage.image) return;
     if (g_srcImage.image) DestroyImage(g_srcImage);
@@ -454,6 +473,24 @@ static void RecreateSwapchain() {
 
 void PresentRGBA(const uint32_t *rgba, int renderW, int renderH) {
     if (!g_ready) return;
+
+    // Keep the swapchain matched to the live surface size. When the surface extent
+    // is "undefined" (Wayland), a fullscreen toggle or resize does NOT raise
+    // VK_ERROR_OUT_OF_DATE, so without this the swapchain would stay stuck at its
+    // creation size and every frame would present letterboxed. Compare against the
+    // SAME source CreateSwapchain uses (so we can't ping-pong) and recreate on a
+    // real change.
+    if (g_ctx.swapchain != VK_NULL_HANDLE) {
+        VkSurfaceCapabilitiesKHR caps;
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_ctx.phys, g_ctx.surface, &caps);
+        VkExtent2D want = DesiredSwapExtent(caps);
+        if ((want.width && want.height) &&
+            (want.width != g_ctx.swapExtent.width || want.height != g_ctx.swapExtent.height)) {
+            printf("[vk] surface resized %ux%u -> %ux%u; rebuilding swapchain\n",
+                   g_ctx.swapExtent.width, g_ctx.swapExtent.height, want.width, want.height);
+            RecreateSwapchain();
+        }
+    }
     if (g_ctx.swapchain == VK_NULL_HANDLE) {
         RecreateSwapchain();
         if (g_ctx.swapchain == VK_NULL_HANDLE) return;   // window minimised / zero extent
@@ -495,9 +532,12 @@ void PresentRGBA(const uint32_t *rgba, int renderW, int renderH) {
     vkCmdClearColorImage(cb, g_swapImages[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                          &black, 1, &range);
 
-    // compute 4:3 letterbox rect within swap extent
+    // Letterbox rect within the swap extent. Preserve the source's intended
+    // DISPLAY aspect: frames are authored square-pixel then shown with the classic
+    // 1.2x VGA vertical stretch. So a 320x200 or 960x600 frame displays 4:3, and a
+    // 1280x600 widescreen composite displays 16:9 — no hardcoded aspect needed.
     int sw = g_ctx.swapExtent.width, sh = g_ctx.swapExtent.height;
-    float targetAspect = 4.0f / 3.0f;
+    float targetAspect = ((float)renderW / (float)renderH) / 1.2f;
     int dw = sw, dh = (int)(sw / targetAspect);
     if (dh > sh) { dh = sh; dw = (int)(sh * targetAspect); }
     int ox = (sw - dw) / 2, oy = (sh - dh) / 2;

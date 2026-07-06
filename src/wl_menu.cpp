@@ -15,6 +15,7 @@
 #endif
 
 #include "wl_def.h"
+#include "rt/render_api.h"     // RENDER_Notify2DScreen (widescreen aspect handling)
 #pragma hdrstop
 
 extern int lastgamemusicoffset;
@@ -399,6 +400,12 @@ US_ControlPanel (ScanCode scancode)
     }
     else
         StartCPMusic (MENUSONG);
+
+    // The control panel draws a full-screen 2D menu over the classic buffer (no
+    // fade-out precedes an in-game pause), so tell the renderer to present it at
+    // native 4:3 instead of the widescreen gameplay layout.
+    RENDER_Notify2DScreen();
+
     SetupControlPanel ();
 
     //

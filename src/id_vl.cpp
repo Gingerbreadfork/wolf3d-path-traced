@@ -90,9 +90,13 @@ unsigned windowHeight = 960;
 
 void    VL_SetVGAPlaneMode (void)
 {
-    // The classic game always renders into a 320x200 8-bit buffer.
-    screenWidth  = 320;
-    screenHeight = 200;
+    // The classic game renders into a 2x (640x400) 8-bit buffer: the software
+    // raycaster casts `screenWidth` columns, so 320 halves the horizontal detail
+    // vs the upstream Wolf4SDL/Chocolate default (scaleFactor 2). 200-based aspect
+    // (400 = 2*200, not 480) keeps it a clean 3x under the 960x600 path-traced
+    // composite and correct under the present's 1.2x VGA stretch (-> 4:3).
+    screenWidth  = 640;
+    screenHeight = 400;
     screenBits   = 8;
 
     // Create the SDL2 window (Vulkan) + initialise the renderer.
@@ -135,7 +139,7 @@ void    VL_SetVGAPlaneMode (void)
     curSurface = screenBuffer;
     curPitch = bufferPitch;
 
-    scaleFactor = 1;
+    scaleFactor = screenWidth / 320;    // 2: scales all classic 2D/HUD/weapon drawing
 
     pixelangle = (short *) malloc(screenWidth * sizeof(short));
     CHECKMALLOCRESULT(pixelangle);
@@ -151,7 +155,7 @@ void    VL_SetVGAPlaneMode (void)
 //
 extern "C" void PLAT_PresentClassic(void)
 {
-    static uint32_t rgba[320 * 200];
+    static uint32_t rgba[640 * 400];   // must be >= screenWidth*screenHeight
     static uint32_t packedPal[256];
 
     if(!screenBuffer || !RENDER_Ready()) return;
@@ -302,6 +306,22 @@ void VL_GetPalette (SDL_Color *palette)
     memcpy(palette, curpal, sizeof(SDL_Color) * 256);
 }
 
+// Current palette-fade brightness (0 = faded to black, 1 = full gamepal). The
+// renderer reads this so a level-start fade-in of the path-traced view stays in
+// sync with the classic palette fade that drives the HUD strip.
+extern "C" float RT_FadeBrightness(void)
+{
+    long cur = 0, full = 0;
+    for (int i = 0; i < 256; ++i)
+    {
+        cur  += curpal[i].r  + curpal[i].g  + curpal[i].b;
+        full += gamepal[i].r + gamepal[i].g + gamepal[i].b;
+    }
+    if (full <= 0) return 1.0f;
+    float f = (float)cur / (float)full;
+    return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+}
+
 
 //===========================================================================
 
@@ -319,6 +339,11 @@ void VL_FadeOut (int start, int end, int red, int green, int blue, int steps)
 {
     int         i,j,orig,delta;
     SDL_Color   *origptr, *newptr;
+
+    // A fade-out precedes leaving the 3D view for a 2D screen (menu, intermission,
+    // "Get Psyched"); tell the renderer so it stops widescreen-compositing the
+    // classic buffer. RENDER_Frame3D re-arms it when gameplay resumes.
+    RENDER_Notify2DScreen();
 
     red = red * 255 / 63;
     green = green * 255 / 63;

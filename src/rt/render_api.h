@@ -39,6 +39,13 @@ void RENDER_PresentClassic(const uint32_t *classicRGBA, int w, int h);
 // renders the world; a subsequent present composites it.
 void RENDER_Frame3D(void);
 
+// Notify the renderer that the game is about to draw a full-screen 2D screen
+// (menu, intermission, "Get Psyched", etc.) over the classic buffer, so any
+// classic-only present that follows is shown at its native 4:3 rather than being
+// composited into the widescreen gameplay layout. Called from VL_FadeOut and the
+// in-game control panel; RENDER_Frame3D re-arms the gameplay view.
+void RENDER_Notify2DScreen(void);
+
 // Mode control.
 void       RENDER_SetMode(RenderMode m);
 RenderMode RENDER_GetMode(void);

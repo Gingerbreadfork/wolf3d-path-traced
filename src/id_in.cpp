@@ -292,6 +292,16 @@ static void processEvent(SDL_Event *event)
             if((mod & KMOD_ALT) && scan == SDL_SCANCODE_F4)
                 Quit(NULL);
 
+            // Alt+Enter toggles fullscreen. Consume it (return) so the Enter
+            // never reaches the game as a menu/fire keypress. Guard on repeat so
+            // holding the combo doesn't flip-flop the window.
+            if((mod & KMOD_ALT) && !event->key.repeat &&
+               (scan == SDL_SCANCODE_RETURN || scan == SDL_SCANCODE_KP_ENTER))
+            {
+                fullscreen = PLAT_ToggleFullscreen();
+                return;
+            }
+
             // Normalise right-hand and keypad variants to the canonical scancode.
             if(scan == SDL_SCANCODE_KP_ENTER)      scan = SDL_SCANCODE_RETURN;
             else if(scan == SDL_SCANCODE_RSHIFT)   scan = SDL_SCANCODE_LSHIFT;

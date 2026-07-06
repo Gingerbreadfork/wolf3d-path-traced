@@ -58,6 +58,21 @@ void PLAT_WindowSize(int *w, int *h) {
     else { if (w) *w = g_winW; if (h) *h = g_winH; }
 }
 
+int PLAT_ToggleFullscreen(void) {
+    if (!g_window) return 0;
+    bool isFs = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+    bool want = !isFs;
+    // Borderless desktop fullscreen (not an exclusive mode-set): keeps the
+    // compositor happy and the letterboxed blit adapts to the new drawable size.
+    if (SDL_SetWindowFullscreen(g_window, want ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0) {
+        printf("PLAT_ToggleFullscreen: %s\n", SDL_GetError());
+        return isFs ? 1 : 0;   // unchanged
+    }
+    // The swapchain notices the size change and recreates on the next present
+    // (PresentRGBA handles OUT_OF_DATE / SUBOPTIMAL), so nothing to do here.
+    return want ? 1 : 0;
+}
+
 void Plat_SetCaption(const char *title) {
     if (g_window && title) SDL_SetWindowTitle(g_window, title);
 }

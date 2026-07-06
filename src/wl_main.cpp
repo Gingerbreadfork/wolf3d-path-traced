@@ -1674,6 +1674,23 @@ void CheckParameters(int argc, char *argv[])
             }
             else param_tedlevel = atoi(argv[i]);
         }
+        else IFARG("--fullscreen")
+            fullscreen = true;
+        else IFARG("--window")
+        {
+            if(i + 2 >= argc)
+            {
+                printf("The window option needs the width and height argument!\n");
+                hasError = true;
+            }
+            else
+            {
+                windowWidth  = atoi(argv[++i]);
+                windowHeight = atoi(argv[++i]);
+                if(windowWidth < 320 || windowHeight < 200)
+                    printf("Window must be at least 320x200!\n"), hasError = true;
+            }
+        }
         else IFARG("--windowed")
             fullscreen = false;
         else IFARG("--windowed-mouse")
@@ -1869,6 +1886,9 @@ void CheckParameters(int argc, char *argv[])
             " --normal               Sets the difficulty to normal for tedlevel\n"
             " --hard                 Sets the difficulty to hard for tedlevel\n"
             " --nowait               Skips intro screens\n"
+            " --fullscreen           Starts the game in fullscreen (toggle: Alt+Enter)\n"
+            " --window <width> <height> Sets the window size (e.g. 1600 900 for 16:9\n"
+            "                        widescreen; the path-traced view fills the width)\n"
             " --windowed[-mouse]     Starts the game in a window [and grabs mouse]\n"
             " --res <width> <height> Sets the screen resolution\n"
             "                        (must be multiple of 320x200 or 320x240)\n"

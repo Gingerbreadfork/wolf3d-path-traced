@@ -649,10 +649,15 @@ void Render(const rt::Scene &scene, uint32_t *out, int w, int h) {
     ParamsGPU pp{};
     pp.camPos[0]=scene.cam.x; pp.camPos[1]=scene.cam.y; pp.camPos[2]=scene.cam.z; pp.camPos[3]=(float)scene.levelNumber;
     pp.camDir[0]=ca; pp.camDir[1]=-sa; pp.camDir[2]=0; pp.camDir[3]=(float)w/(float)h;
-    float tanH = tanf(scene.cam.fovRad*0.5f);
-    // The classic projection is isotropic in world space (f_x == f_y == scale),
-    // so with the viewport-aspect render target this needs no fudge factor.
-    float tanV = tanH * (float)h/(float)w;
+    // Hor+ widescreen. The classic projection is isotropic in world space, so at
+    // the classic 2:1 viewport (960x480) horizontal == vertical scale and the view
+    // matches the raycaster exactly. For WIDER render targets we hold that classic
+    // VERTICAL fov fixed and DERIVE a wider horizontal fov, so a widescreen view
+    // reveals more of the world at the sides instead of stretching it.
+    const float kRefAspect = 960.0f / 480.0f;      // classic 3D viewport aspect (2:1)
+    float tanHref = tanf(scene.cam.fovRad*0.5f);    // classic horizontal half-fov
+    float tanV    = tanHref / kRefAspect;           // fixed vertical half-fov
+    float tanH    = tanV * (float)w/(float)h;       // Hor+ horizontal half-fov
     pp.camRight[0]=rightX; pp.camRight[1]=rightY; pp.camRight[2]=0; pp.camRight[3]=tanH;
     pp.camUp[0]=0; pp.camUp[1]=0; pp.camUp[2]=1; pp.camUp[3]=tanV;
     pp.counts[0]=(int)insts.size(); pp.counts[1]=(int)lg.size(); pp.counts[2]=0; pp.counts[3]=g_bounces;
