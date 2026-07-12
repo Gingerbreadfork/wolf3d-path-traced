@@ -11,6 +11,7 @@
 // other translation units -> ODR layout mismatch and heap corruption.
 #include "rt_scene.h"
 #include "rt_lights.h"
+#include "render_api.h"
 #include <math.h>
 #include "wl_def.h"          // original game globals (sets #pragma pack(1))
 
@@ -209,9 +210,10 @@ void ExtractScene(Scene &s) {
 
     // Overhead ceiling lights on a coarse grid near the camera so every room is
     // readable and sprites cast real downward shadows. Limited to a radius so
-    // the shader's per-hit light loop stays cheap.
+    // the shader's per-hit light loop stays cheap. Skipped in --dark mode.
     int cx = (int)s.cam.x, cy = (int)s.cam.y;
     const int R = 9, STEP = 4;
+    if (!rt_dark)
     for (int gx = ((cx - R) / STEP) * STEP; gx <= cx + R; gx += STEP) {
         for (int gy = ((cy - R) / STEP) * STEP; gy <= cy + R; gy += STEP) {
             if (gx < 1 || gy < 1 || gx >= kMapSize - 1 || gy >= kMapSize - 1) continue;

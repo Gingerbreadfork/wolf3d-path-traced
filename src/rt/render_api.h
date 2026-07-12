@@ -55,6 +55,11 @@ const char *RENDER_ModeName(RenderMode m);
 // Renderer tunables (bounces, samples, accumulation) toggled from menus/keys.
 void RENDER_AdjustSetting(int which, int delta);
 
+// --dark: kill all world lighting (ambient fills + lamp/ceiling lights) so the
+// levels are pitch black; only muzzle flashes and projectile glows light the
+// world. Set once at startup from the command line.
+extern int rt_dark;
+
 // Save screenshots as BMPs (written to the working directory). which:
 // 0 = all (classic + path traced + split), 1 = classic, 2 = path traced,
 // 3 = split compare.

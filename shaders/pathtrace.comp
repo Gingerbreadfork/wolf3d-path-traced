@@ -178,8 +178,11 @@ vec3 tracePath(vec3 dir, int s){
         // slightly tint/brighten them and they never blow out to white.
         if(type==T_SPRITE){
             // Flat, clamped light. Local lamps add a little; being shadowed from
-            // a lamp darkens slightly.
-            float light = 0.5;
+            // a lamp darkens slightly. In --dark mode (tune.w) there is no base
+            // light and point lights matter much more, so enemies only appear
+            // when a muzzle flash or projectile actually lights them.
+            float dark = step(0.5, P.tune.w);
+            float light = 0.5 * (1.0 - dark);
             int nls = P.counts.y;
             for(int i=0;i<nls;++i){
                 Light L = lights[i]; int lt=int(L.posType.w);
@@ -188,7 +191,7 @@ vec3 tracePath(vec3 dir, int s){
                 float radius = max(L.params.x, 0.001); if(d>radius) continue;
                 float atten = clamp(1.0-d/radius,0.0,1.0); atten*=atten;
                 float vis = traceShadow(hitp + n*0.02, toL/d, d-0.04);
-                light += atten * vis * 0.12;   // intensity-independent, small
+                light += atten * vis * mix(0.12, 0.55, dark);
             }
             // The palette texture is sRGB/display-space. Convert to linear before
             // shading so the post ACES+gamma pass reproduces the ORIGINAL sprite
@@ -198,7 +201,7 @@ vec3 tracePath(vec3 dir, int s){
             // Emissive projectiles (rockets/fireballs/needles) glow: add self-
             // illumination on top of the flat light so the sprite reads as hot and
             // blooms in the post pass (mtl.w = 0 for ordinary enemies/props).
-            radiance += throughput * sa * (clamp(light, 0.45, 0.85) + mtl.w * 2.2);
+            radiance += throughput * sa * (clamp(light, 0.45 * (1.0 - dark), 0.85) + mtl.w * 2.2);
             break;   // no reflection bounce off sprites
         }
 

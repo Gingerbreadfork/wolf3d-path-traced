@@ -85,6 +85,8 @@ char    configname[13] = "config.";
 // Command line parameter variables
 //
 boolean param_debugmode = false;
+boolean param_giveitems = false;
+boolean param_giveguns = false;
 boolean param_nowait = false;
 int     param_difficulty = 1;           // default is "normal"
 int     param_tedlevel = -1;            // default is not to start a level
@@ -1655,6 +1657,18 @@ void CheckParameters(int argc, char *argv[])
         IFARG("--debugmode")
 #endif
             param_debugmode = true;
+        else IFARG("--god")
+            godmode = 1;
+        else IFARG("--noclip")
+            noclip = true;
+        else IFARG("--ammo")
+            ammocheat = true;
+        else IFARG("--items")
+            param_giveitems = true;
+        else IFARG("--guns")
+            param_giveguns = true;
+        else IFARG("--dark")
+            rt_dark = 1;
         else IFARG("--baby")
             param_difficulty = 0;
         else IFARG("--easy")
@@ -1881,6 +1895,15 @@ void CheckParameters(int argc, char *argv[])
             "Options:\n"
             " --help                 This help page\n"
             " --tedlevel <level>     Starts the game in the given level\n"
+            " --god                  God mode (invulnerability)\n"
+            " --items                Chaingun, full ammo, all keys and full health\n"
+            "                        at the start of every level\n"
+            " --guns                 All weapons and full ammo at the start of\n"
+            "                        every level\n"
+            " --ammo                 Infinite ammo\n"
+            " --noclip               Walk through walls\n"
+            " --dark                 Darkness: all path-tracer world lights off;\n"
+            "                        only muzzle flashes and projectiles give light\n"
             " --baby                 Sets the difficulty to baby for tedlevel\n"
             " --easy                 Sets the difficulty to easy for tedlevel\n"
             " --normal               Sets the difficulty to normal for tedlevel\n"

@@ -892,6 +892,8 @@ extern  char     configname[13];
 // Command line parameter variables
 //
 extern  boolean  param_debugmode;
+extern  boolean  param_giveitems;
+extern  boolean  param_giveguns;
 extern  boolean  param_nowait;
 extern  int      param_difficulty;
 extern  int      param_tedlevel;

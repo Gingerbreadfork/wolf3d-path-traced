@@ -149,6 +149,17 @@ Space to open doors, `1`‑`4` weapons, Esc for the menu), plus renderer hotkeys
 | `F5` | Screenshot (classic + path‑traced + split, exported as BMP) |
 | `[` / `]` | Fewer / more reflection bounces |
 
+Cheats are available as launch flags: `--god` (invulnerability), `--guns`
+(all weapons and full ammo at the start of every level), `--items` (weapons,
+ammo, all keys and full health every level), `--ammo` (infinite ammo),
+`--noclip` (walk through walls), and `--tedlevel <n>` (jump straight to a
+level; combine with a difficulty flag like `--normal`).
+
+`--dark` turns off every path-tracer world light (ambient fill and all lamp /
+ceiling lights): levels are pitch black, and only your muzzle flash and enemy
+projectiles light the world. Only affects the path-traced renderer — the
+classic renderer (`F8`) is unlit and stays fullbright.
+
 Only the live 3D view is path traced; menus and intermissions always use the
 classic frame.
 

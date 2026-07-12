@@ -12,6 +12,7 @@
 #include "rt_pathtrace.h"
 #include "rt_vulkan.h"
 #include "rt_materials.h"
+#include "render_api.h"
 #include <vulkan/vulkan.h>
 #include <math.h>
 #include <string.h>
@@ -639,7 +640,11 @@ void Render(const rt::Scene &scene, uint32_t *out, int w, int h) {
         g.params[0]=L.radius; g.params[1]=(float)L.flicker;
         lg.push_back(g);
     }
-    if (lg.empty()) { LightGPU z{}; z.posType[3]=6; z.color[0]=z.color[1]=z.color[2]=0.5f; z.color[3]=1.0f; lg.push_back(z); }
+    if (lg.empty()) { LightGPU z{}; z.posType[3]=6;
+        // Keep the GPU buffer non-empty, but in --dark the fallback fill must
+        // be black or an empty light list re-lights the whole level.
+        float f = rt_dark ? 0.0f : 0.5f;
+        z.color[0]=z.color[1]=z.color[2]=f; z.color[3]=1.0f; lg.push_back(z); }
     VkDeviceSize lSz = sizeof(LightGPU) * lg.size();
     if (g_lightData.size < lSz) { if (g_lightData.buffer) DestroyBuffer(g_lightData);
         g_lightData = CreateBuffer(lSz + 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -664,7 +669,11 @@ void Render(const rt::Scene &scene, uint32_t *out, int w, int h) {
     // Polished floor with a subtle sheen (dielectric F0 ~0.06, not a mirror).
     pp.floorColor[0]=0.13f; pp.floorColor[1]=0.13f; pp.floorColor[2]=0.14f; pp.floorColor[3]=0.06f;
     pp.ceilColor[0]=0.11f; pp.ceilColor[1]=0.11f; pp.ceilColor[2]=0.14f; pp.ceilColor[3]=0.0f;
-    pp.tune[0]=g_ambient; pp.tune[1]=g_shadowStrength; pp.tune[2]=g_exposure; pp.tune[3]=0.0f;
+    // --dark: no hemispheric sky ambient; tune.w tells the shader so sprites
+    // lose their flat base light too and are lit only by nearby point lights.
+    pp.tune[0]=rt_dark ? 0.0f : g_ambient;
+    pp.tune[1]=g_shadowStrength; pp.tune[2]=g_exposure;
+    pp.tune[3]=rt_dark ? 1.0f : 0.0f;
     if (g_params.size < sizeof(ParamsGPU)) { if (g_params.buffer) DestroyBuffer(g_params);
         g_params = CreateBuffer(sizeof(ParamsGPU), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT); }

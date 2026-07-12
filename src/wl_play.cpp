@@ -1264,6 +1264,25 @@ void PlayLoop (void)
     memset (buttonstate, 0, sizeof (buttonstate));
     ClearPaletteShifts ();
 
+    if (param_giveitems && !demoplayback)
+    {
+        HealSelf (99);
+        GiveWeapon (wp_chaingun);
+        gamestate.ammo = 99;
+        gamestate.keys = 3;
+        DrawWeapon ();
+        DrawAmmo ();
+        DrawKeys ();
+    }
+
+    if (param_giveguns && !demoplayback)
+    {
+        GiveWeapon (wp_chaingun);
+        gamestate.ammo = 99;
+        DrawWeapon ();
+        DrawAmmo ();
+    }
+
     if (MousePresent && IN_IsInputGrabbed())
         IN_CenterMouse();         // Clear accumulated mouse movement
 
