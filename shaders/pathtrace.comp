@@ -161,67 +161,83 @@ vec3 shade(vec3 p, vec3 n, vec3 albedo, vec4 mtl, bool full){
     return col;
 }
 
-// Fixed 4x rotated-grid sub-pixel offsets (AA + deterministic glossy jitter).
+// Fixed 4x rotated-grid sub-pixel offsets for anti-aliasing.
 const vec2 AA_OFF[4] = vec2[4](vec2(-0.125,-0.375), vec2(0.375,-0.125),
                                vec2(-0.375,0.125),  vec2(0.125,0.375));
 
-vec3 tracePath(vec3 dir, int s){
-    vec3 origin = P.camPos.xyz;
-    vec3 radiance=vec3(0.0), throughput=vec3(1.0);
-    int bounces = P.counts.w;
-    for(int b=0; b<=bounces; ++b){
-        vec3 hitp; int id = traceClosest(origin, dir, 96.0, hitp);
-        if(id<0){ radiance += throughput * vec3(0.02,0.022,0.03); break; }
-        vec2 uv; vec3 n; int page; vec4 mtl; int type;
-        surfaceInfo(id, hitp, uv, n, page, mtl, type);
+// Floor reflection rays per anti-aliasing sample, and the radius of the disc
+// they are spread over. The spread is what blurs the reflection.
+const int   REFL_TAPS  = 4;
+const float GLOSS_SPREAD = 0.30;
 
-        // Sprites (enemies/props) keep their original palette identity: a flat,
-        // clamped light level (no fake-normal n.l, no sky wash) so lamps only
-        // slightly tint/brighten them and they never blow out to white.
-        if(type==T_SPRITE){
-            // Flat, clamped light. Local lamps add a little; being shadowed from
-            // a lamp darkens slightly. In --dark mode (tune.w) there is no base
-            // light and point lights matter much more, so enemies only appear
-            // when a muzzle flash or projectile actually lights them.
-            float dark = step(0.5, P.tune.w);
-            float light = 0.5 * (1.0 - dark);
-            int nls = P.counts.y;
-            for(int i=0;i<nls;++i){
-                Light L = lights[i]; int lt=int(L.posType.w);
-                if(lt==6) continue;
-                vec3 toL = L.posType.xyz - hitp; float d = length(toL);
-                float radius = max(L.params.x, 0.001); if(d>radius) continue;
-                float atten = clamp(1.0-d/radius,0.0,1.0); atten*=atten;
-                float vis = traceShadow(hitp + n*0.02, toL/d, d-0.04);
-                light += atten * vis * mix(0.12, 0.55, dark);
-            }
-            // The palette texture is sRGB/display-space. Convert to linear before
-            // shading so the post ACES+gamma pass reproduces the ORIGINAL sprite
-            // colour instead of lifting mid-tones toward white (the washed look).
-            vec3 sa = sampleAtlas(page,uv).rgb;
-            sa *= sa;                                   // ~sRGB -> linear
-            // Emissive projectiles (rockets/fireballs/needles) glow: add self-
-            // illumination on top of the flat light so the sprite reads as hot and
-            // blooms in the post pass (mtl.w = 0 for ordinary enemies/props).
-            radiance += throughput * sa * (clamp(light, 0.45 * (1.0 - dark), 0.85) + mtl.w * 2.2);
-            break;   // no reflection bounce off sprites
+// Point i of the pixel's 16-point golden-angle disc, turned by rot.
+vec2 glossOffset(int i, float rot){
+    float r = sqrt((float(i)+0.5)/float(4*REFL_TAPS)) * GLOSS_SPREAD;
+    float a = float(i)*2.399963 + rot;
+    return r*vec2(cos(a), sin(a));
+}
+
+// Trace one ray and return the radiance of what it hits. type is -1 on a miss.
+// Only the primary ray gets shadows and ambient occlusion on walls and floors.
+vec3 hitRadiance(vec3 origin, vec3 dir, bool primary,
+                 out int type, out vec3 hitp, out vec3 n, out vec3 albedo){
+    type = -1; n = vec3(0.0); albedo = vec3(0.0);
+    int id = traceClosest(origin, dir, 96.0, hitp);
+    if(id<0) return vec3(0.02,0.022,0.03);
+    vec2 uv; int page; vec4 mtl;
+    surfaceInfo(id, hitp, uv, n, page, mtl, type);
+
+    if(type==T_SPRITE){
+        // Sprites take a flat, clamped light level so they keep their palette
+        // colours. In --dark mode there is no base level and only point lights
+        // reveal them.
+        float dark = step(0.5, P.tune.w);
+        float light = 0.5 * (1.0 - dark);
+        int nls = P.counts.y;
+        for(int i=0;i<nls;++i){
+            Light L = lights[i]; int lt=int(L.posType.w);
+            if(lt==6) continue;
+            vec3 toL = L.posType.xyz - hitp; float d = length(toL);
+            float radius = max(L.params.x, 0.001); if(d>radius) continue;
+            float atten = clamp(1.0-d/radius,0.0,1.0); atten*=atten;
+            float vis = traceShadow(hitp + n*0.02, toL/d, d-0.04);
+            light += atten * vis * mix(0.12, 0.55, dark);
         }
+        // The palette texture is in display space; square it to shade in linear.
+        vec3 sa = sampleAtlas(page,uv).rgb;
+        sa *= sa;
+        // mtl.w is the emissive strength of projectiles, zero for everything else.
+        return sa * (clamp(light, 0.45 * (1.0 - dark), 0.85) + mtl.w * 2.2);
+    }
 
-        vec3 albedo = (type==T_FLOOR)?P.floorColor.rgb : (type==T_CEIL)?P.ceilColor.rgb : sampleAtlas(page,uv).rgb;
-        radiance += throughput * shade(hitp, n, albedo, mtl, b==0);   // full quality on primary only
-        // Only the floor reflects (walls/doors are matte, reflectivity 0). Keep
-        // it a soft, dim, heavily-blurred sheen so it reads as polished stone,
-        // never a mirror image of the room.
-        float refl = (type==T_FLOOR) ? P.floorColor.w : mtl.z;
-        if(b<bounces && type==T_FLOOR && refl>0.02){
-            float fres = refl + (1.0-refl)*pow(1.0-max(dot(-dir,n),0.0), 5.0);
-            fres = min(fres, 0.07);
-            throughput *= fres * (0.55*mix(vec3(1.0), albedo, 0.5));
-            dir = reflect(dir, n); origin = hitp + n*0.02;
-            vec3 t = normalize(cross(vec3(1,0,0), n));
-            vec3 bt = cross(n, t);
-            dir = normalize(dir + (t*AA_OFF[s].x + bt*AA_OFF[s].y) * 0.6);  // wide gloss
-        } else break;
+    albedo = (type==T_FLOOR)?P.floorColor.rgb : (type==T_CEIL)?P.ceilColor.rgb : sampleAtlas(page,uv).rgb;
+    return shade(hitp, n, albedo, mtl, primary);
+}
+
+// Radiance along one camera ray. s is the anti-aliasing sample index and rot
+// the pixel's rotation of the gloss disc.
+vec3 tracePath(vec3 dir, int s, float rot){
+    int type; vec3 hitp, n, albedo;
+    vec3 radiance = hitRadiance(P.camPos.xyz, dir, true, type, hitp, n, albedo);
+
+    // Only the floor reflects, as a dim blurred sheen. The reflection rays cover
+    // a disc that is rotated per pixel, so the taps of neighbouring pixels do
+    // not line up into separate ghost images.
+    float refl = P.floorColor.w;
+    if(P.counts.w>0 && type==T_FLOOR && refl>0.02){
+        float fres = refl + (1.0-refl)*pow(1.0-max(dot(-dir,n),0.0), 5.0);
+        fres = min(fres, 0.07);
+        vec3 tint = fres * (0.55*mix(vec3(1.0), albedo, 0.5));
+        vec3 rdir = reflect(dir, n);
+        vec3 t = normalize(cross(vec3(1,0,0), n));
+        vec3 bt = cross(n, t);
+        vec3 acc = vec3(0.0);
+        for(int r=0;r<REFL_TAPS;++r){
+            vec2 o = glossOffset(r*4+s, rot);
+            int rtype; vec3 rp, rn, ralb;
+            acc += hitRadiance(hitp + n*0.02, normalize(rdir + t*o.x + bt*o.y), false, rtype, rp, rn, ralb);
+        }
+        radiance += tint * acc / float(REFL_TAPS);
     }
     radiance = min(radiance, vec3(6.0));
     if(any(isnan(radiance)) || any(isinf(radiance))) radiance = vec3(0.0);
@@ -238,12 +254,15 @@ void main(){
     ivec2 dim = imageSize(outImage);
     if(pix.x>=dim.x || pix.y>=dim.y) return;
 
-    // Deterministic 4x AA (fixed sub-samples): stable, no shimmer.
+    // The gloss rotation depends only on the pixel, so a still view stays stable.
+    float rot = 6.2831853 * fract(52.9829189 * fract(0.06711056*float(pix.x) + 0.00583715*float(pix.y)));
+
+    // Four fixed sub-samples per pixel.
     vec3 radiance = vec3(0.0);
     for(int s=0;s<4;++s){
         vec2 ndc = (vec2(pix)+0.5+AA_OFF[s])/vec2(dim)*2.0-1.0;
         vec3 dir = normalize(P.camDir.xyz + ndc.x*P.camRight.w*P.camRight.xyz - ndc.y*P.camUp.w*P.camUp.xyz);
-        radiance += tracePath(dir, s);
+        radiance += tracePath(dir, s, rot);
     }
     radiance *= 0.25;
 
