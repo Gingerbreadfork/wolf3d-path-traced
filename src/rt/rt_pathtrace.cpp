@@ -295,11 +295,18 @@ static void CreateOutputImages(int w, int h) {
     // Tone mapping happens on the GPU, so the output/readback are cheap RGBA8.
     g_outImage = CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    // HOST_CACHED so the CPU read-back memcpy is fast (uncached/write-combined
-    // reads were the single biggest per-frame cost).
-    g_readback = CreateBuffer((VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-        | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    // Cached host memory makes the CPU read-back fast. Not every device has a
+    // cached, coherent type, so fall back to the combination Vulkan guarantees.
+    VkMemoryPropertyFlags rbProps = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                                  | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                                  | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    bool haveCached = false;
+    const VkPhysicalDeviceMemoryProperties &mp = ctx().memProps;
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i)
+        if ((mp.memoryTypes[i].propertyFlags & rbProps) == rbProps) { haveCached = true; break; }
+    if (!haveCached)
+        rbProps = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    g_readback = CreateBuffer((VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, rbProps);
 
     // transition storage images to GENERAL
     VkCommandBuffer cb = BeginOneShot();
