@@ -48,8 +48,10 @@ void surfaceInfo(int id, vec3 p, out vec2 uv, out vec3 n, out int page, out vec4
     if(type==T_BOX){
         vec3 c = vec3(it.origin.xy + vec2(0.5), 0.5);
         vec3 d = p - c; vec3 ad = abs(d);
-        if(ad.x>=ad.y && ad.x>=ad.z){ n=vec3(sign(d.x),0,0); uv=vec2(fract(p.y),1.0-p.z); page=it.typePages.y; }
-        else if(ad.y>=ad.x && ad.y>=ad.z){ n=vec3(0,sign(d.y),0); uv=vec2(fract(p.x),1.0-p.z); page=it.typePages.z; }
+        // u is taken from the block's own origin so a pushwall carries its texture,
+        // and flipped on +x and -y faces as the classic renderer does.
+        if(ad.x>=ad.y && ad.x>=ad.z){ n=vec3(sign(d.x),0,0); float u=fract(p.y-it.origin.y); uv=vec2(d.x>0.0?1.0-u:u,1.0-p.z); page=it.typePages.y; }
+        else if(ad.y>=ad.x && ad.y>=ad.z){ n=vec3(0,sign(d.y),0); float u=fract(p.x-it.origin.x); uv=vec2(d.y<0.0?1.0-u:u,1.0-p.z); page=it.typePages.z; }
         else { n=vec3(0,0,sign(d.z)); uv=fract(p.xy); page=it.typePages.y; }
     } else if(type==T_FLOOR){ n=vec3(0,0,1); uv=fract(p.xy); page=it.typePages.y; }
     else if(type==T_CEIL){ n=vec3(0,0,-1); uv=fract(p.xy); page=it.typePages.y; }
