@@ -223,6 +223,27 @@ static bool DeviceHasExtension(VkPhysicalDevice d, const char *name) {
     return false;
 }
 
+// True when the device can run the path tracer: the ray-tracing extensions and
+// the features they carry.
+static bool DeviceSupportsRT(VkPhysicalDevice d) {
+    if (!DeviceHasExtension(d, VK_KHR_RAY_QUERY_EXTENSION_NAME) ||
+        !DeviceHasExtension(d, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME))
+        return false;
+
+    VkPhysicalDeviceRayQueryFeaturesKHR rq{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accel{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    accel.pNext = &rq;
+    VkPhysicalDeviceBufferDeviceAddressFeatures bda{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+    bda.pNext = &accel;
+    VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    f2.pNext = &bda;
+    vkGetPhysicalDeviceFeatures2(d, &f2);
+    return bda.bufferDeviceAddress && accel.accelerationStructure && rq.rayQuery;
+}
+
 static bool PickPhysicalDevice() {
     uint32_t n = 0; vkEnumeratePhysicalDevices(g_ctx.instance, &n, nullptr);
     if (!n) { printf("[vk] no Vulkan devices\n"); return false; }
@@ -233,8 +254,7 @@ static bool PickPhysicalDevice() {
     int bestScore = -1;
     for (auto d : devs) {
         VkPhysicalDeviceProperties p; vkGetPhysicalDeviceProperties(d, &p);
-        bool rt = DeviceHasExtension(d, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
-                  DeviceHasExtension(d, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        bool rt = DeviceSupportsRT(d);
         int score = 0;
         if (p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) score += 1000;
         if (rt) score += 5000;
@@ -242,8 +262,7 @@ static bool PickPhysicalDevice() {
         if (score > bestScore) { bestScore = score; best = d; }
     }
     g_ctx.phys = best;
-    g_ctx.rtSupported = DeviceHasExtension(best, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
-                        DeviceHasExtension(best, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    g_ctx.rtSupported = DeviceSupportsRT(best);
     vkGetPhysicalDeviceMemoryProperties(best, &g_ctx.memProps);
     VkPhysicalDeviceProperties p; vkGetPhysicalDeviceProperties(best, &p);
     printf("[vk] selected: %s  (ray query %s)\n", p.deviceName,
