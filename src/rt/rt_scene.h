@@ -48,6 +48,7 @@ struct SpriteInst {
     int32_t texPage;       // sprite page (relative index into sprite atlas)
     int     kind;          // 0 static, 1 actor, 2 projectile
     float   emissive;      // >0 for glowing pickups/effects
+    bool    lamp;          // a lit fixture that gets a light of its own
 };
 
 // A point/area light attached to the map (lamps, signs, muzzle, etc).

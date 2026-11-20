@@ -171,6 +171,9 @@ void ExtractScene(Scene &s) {
         sp.texPage = st->shapenum;
         sp.kind = 0;
         sp.emissive = 0.0f;
+        // The game marks its lamps fullbright. Bonus items can be fullbright too
+        // and are not lamps.
+        sp.lamp = (st->flags & FL_FULLBRIGHT) && !(st->flags & FL_BONUS);
         s.sprites.push_back(sp);
     }
 
@@ -187,6 +190,7 @@ void ExtractScene(Scene &s) {
         sp.texPage = shape;
         sp.kind = 1;
         sp.emissive = 0.0f;
+        sp.lamp = false;
         float gr, gg, gb;
         if (ProjectileGlow(ob->obclass, gr, gg, gb)) {
             sp.kind = 2;            // projectile

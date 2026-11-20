@@ -14,20 +14,6 @@ extern "C" { int rt_dark = 0; }
 
 namespace lights {
 
-// Ceiling-lamp static sprite pages (shareware/registered). These glow.
-static bool IsCeilingLamp(int page) {
-    // SPR_STAT_27 (green ceiling light) and a couple of common lamp props.
-    // Refined against the actual stat table; err toward visibility.
-    switch (page) {
-        case 27:   // green ceiling light
-        case 29:   // chandelier-ish
-        case 34:   // floor lamp
-            return true;
-        default:
-            return false;
-    }
-}
-
 void Build(rt::Scene &s) {
     s.lights.clear();
 
@@ -46,12 +32,11 @@ void Build(rt::Scene &s) {
 
         // Lamp statics -> warm ceiling lights.
         for (const auto &sp : s.sprites) {
-            if (sp.kind != 0) continue;
-            if (!IsCeilingLamp(sp.texPage)) continue;
+            if (!sp.lamp) continue;
             rt::LightInst L{};
             L.x = sp.x; L.y = sp.y; L.z = 0.92f;
             L.r = 1.0f; L.g = 0.92f; L.b = 0.70f;
-            L.intensity = 2.2f;
+            L.intensity = 1.0f;
             L.radius = 6.0f;
             L.type = LT_CEILING;
             L.flicker = 0;
